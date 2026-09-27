@@ -1,0 +1,150 @@
+.explainweave {
+  --ew-accent: var(--interactive-accent, #527368);
+  --ew-line: var(--background-modifier-border, #e3e7e3);
+  --ew-muted: var(--text-muted, #6d756f);
+  --ew-surface: var(--background-primary, #fff);
+  --ew-soft: var(--background-secondary, #f6f7f5);
+  color: var(--text-normal, #252e29);
+  background: var(--ew-surface);
+  font-family: var(--font-interface, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100%;
+  padding: 22px clamp(12px, 3vw, 40px) 18px;
+  box-sizing: border-box;
+  container-type: inline-size;
+}
+.explainweave *, .explainweave *::before, .explainweave *::after { box-sizing: border-box; }
+.explainweave button, .explainweave input, .explainweave select, .explainweave textarea { font: inherit; }
+.explainweave button { min-height: 30px; height: auto; padding: 4px 10px; white-space: normal; cursor: pointer; }
+.explainweave button:disabled { cursor: not-allowed; opacity: .42; }
+.explainweave button:focus-visible, .explainweave summary:focus-visible { outline: 2px solid var(--ew-accent); outline-offset: 3px; }
+.explainweave h1, .explainweave h2, .explainweave h3, .explainweave h4, .explainweave p { margin-block: 0; }
+.ew-app-header, .ew-header-actions, .ew-brand, .ew-session-bar, .ew-node-header, .ew-actions, .ew-node-tools, .ew-panel-top, .ew-app-footer { display: flex; align-items: center; gap: 10px; }
+.ew-app-header { justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.ew-brand { min-width: 0; gap: 12px; }
+.ew-brand h1 { font-size: 20px; font-weight: 650; line-height: 1.3; overflow-wrap: anywhere; }
+.ew-brand-mark { display: inline-flex; justify-content: center; align-items: center; width: 38px; height: 38px; flex: 0 0 auto; background: var(--ew-accent); color: var(--text-on-accent, #fff); border-radius: 11px; font-size: 26px; font-weight: 400; }
+.ew-eyebrow { color: var(--ew-muted); font-size: 10px; font-weight: 650; letter-spacing: .12em; }
+.ew-header-actions { flex-wrap: wrap; gap: 6px; }
+.ew-segmented { display: flex; padding: 3px; background: var(--ew-soft); border: 1px solid var(--ew-line); border-radius: 8px; }
+.explainweave .ew-segmented button { background: transparent; box-shadow: none; border: none; border-radius: 5px; color: var(--ew-muted); }
+.explainweave .ew-segmented button[aria-pressed="true"] { background: var(--ew-surface); color: var(--text-normal); box-shadow: 0 1px 4px #00000010; }
+.ew-count { font-size: 11px; background: var(--ew-soft); border-radius: 5px; padding: 1px 5px; margin-left: 3px; }
+.ew-source { color: var(--ew-muted); font-size: 11px; margin-top: 9px !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ew-session-bar { justify-content: space-between; flex-wrap: wrap; color: var(--ew-muted); font-size: 11px; border-bottom: 1px solid var(--ew-line); margin-top: 18px; padding-bottom: 12px; }
+.ew-workspace { display: grid; grid-template-columns: 164px minmax(0, 1fr); align-items: start; gap: 26px; margin-top: 24px; }
+.ew-workspace.ew-has-panel { grid-template-columns: 150px minmax(280px, 1fr) 280px; gap: 20px; }
+.ew-outline { position: sticky; top: 14px; min-width: 0; }
+.ew-outline > .ew-eyebrow { padding: 0 8px 10px; }
+.explainweave .ew-outline button { width: 100%; display: flex; align-items: baseline; gap: 9px; padding: 8px; margin-bottom: 3px; border: none; border-radius: 6px; background: transparent; box-shadow: none; text-align: left; color: var(--ew-muted); font-size: 12px; }
+.ew-outline button > span:nth-child(2) { flex: 1; overflow-wrap: anywhere; }
+.explainweave .ew-outline button:hover, .explainweave .ew-outline button[aria-current] { background: var(--ew-soft); color: var(--text-normal); }
+.ew-outline-number { width: 15px; flex: 0 0 auto; color: var(--text-faint, #9ca59e); font-size: 11px; font-variant-numeric: tabular-nums; }
+.ew-outline-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ew-accent); flex: 0 0 auto; }
+.ew-article { min-width: 0; max-width: 820px; width: 100%; margin-inline: auto; }
+.ew-node { border: 1px solid var(--ew-line); border-radius: 10px; margin-bottom: 18px; padding: 20px 22px 10px; background: var(--ew-surface); scroll-margin-block: 20px; position: relative; }
+.ew-node-current { border-color: color-mix(in srgb, var(--ew-accent) 48%, var(--ew-line)); }
+.ew-node:focus-visible { outline: 2px solid var(--ew-accent); outline-offset: 3px; }
+.ew-node-header { margin-bottom: 16px; gap: 10px; align-items: baseline; }
+.ew-node-header h2 { font-size: 14px; font-weight: 650; flex: 1; overflow-wrap: anywhere; }
+.ew-node-number { font-size: 10px; color: var(--ew-muted); letter-spacing: .04em; }
+.ew-reading-marker { font-size: 10px; color: var(--ew-accent); flex: 0 0 auto; }
+.explainweave .ew-quiet { box-shadow: none; border: none; background: transparent; color: var(--ew-muted); padding: 2px 4px; font-size: 11px; min-height: 24px; }
+.ew-prose { font-family: var(--font-text, inherit); font-size: var(--font-text-size, 15px); line-height: 1.85; overflow-wrap: anywhere; }
+.ew-prose > :first-child { margin-top: 0; }
+.ew-prose > :last-child { margin-bottom: 0; }
+.ew-prose p + p { margin-top: .9em; }
+.ew-prose pre { overflow-x: auto; max-width: 100%; }
+.ew-prose table { display: block; max-width: 100%; overflow-x: auto; }
+.ew-prose img { max-width: 100%; height: auto; }
+.ew-plain-markdown { white-space: pre-wrap; }
+.ew-node-tools { margin-top: 17px; gap: 5px; flex-wrap: wrap; }
+.explainweave .ew-node-tools > button, .explainweave .ew-more summary { color: var(--ew-muted); border: none; background: transparent; box-shadow: none; padding: 3px 7px; font-size: 11px; border-radius: 5px; }
+.explainweave .ew-node-tools > button:hover, .explainweave .ew-more summary:hover { color: var(--text-normal); background: var(--ew-soft); }
+.ew-more { position: relative; margin-left: auto; }
+.ew-more summary { cursor: pointer; list-style: none; }
+.ew-more-menu { position: absolute; z-index: 5; top: 30px; right: 0; width: 190px; background: var(--ew-surface); padding: 5px; border: 1px solid var(--ew-line); border-radius: 8px; box-shadow: 0 8px 24px #00000015; }
+.explainweave .ew-more-menu button { display: block; width: 100%; border: none; box-shadow: none; background: transparent; padding: 7px 9px; text-align: left; font-size: 12px; }
+.explainweave .ew-more-menu button:hover { background: var(--ew-soft); }
+.explainweave .ew-danger { color: var(--text-error, #b34e48); }
+.ew-node-questions { margin-top: 14px; border-top: 1px solid var(--ew-line); }
+.explainweave .ew-section-toggle { display: flex; justify-content: space-between; width: 100%; background: transparent; box-shadow: none; border: none; padding: 10px 0 5px; color: var(--ew-muted); font-size: 11px; }
+.explainweave .ew-question-line { width: 100%; display: flex; align-items: flex-start; gap: 10px; border: none; border-radius: 5px; box-shadow: none; background: transparent; text-align: left; padding: 8px 5px; font-size: 12px; }
+.explainweave .ew-question-line:hover { background: var(--ew-soft); }
+.ew-question-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ew-question-meta { display: flex; align-items: flex-end; gap: 5px; flex-direction: column; flex: 0 0 auto; }
+.ew-status { display: inline-block; font-size: 10px; font-weight: 500; line-height: 1.5; padding: 2px 6px; border-radius: 4px; background: var(--ew-soft); color: var(--ew-muted); white-space: nowrap; }
+.ew-status-partial { background: color-mix(in srgb, #bf963d 12%, var(--ew-surface)); color: var(--text-warning, #92702b); }
+.ew-status-explained { background: color-mix(in srgb, var(--ew-accent) 10%, var(--ew-surface)); color: var(--ew-accent); }
+.ew-status-review { background: color-mix(in srgb, #c37f3a 12%, var(--ew-surface)); color: var(--text-warning, #a16a29); }
+.ew-future { color: var(--ew-accent); font-size: 10px; }
+.ew-muted, .ew-hint { color: var(--ew-muted); }
+.ew-hint { font-size: 11px; line-height: 1.65; margin-top: 8px !important; }
+.ew-composer { display: grid; gap: 8px; padding: 14px; background: var(--ew-soft); border: 1px solid var(--ew-line); border-radius: 8px; margin-block: 14px 8px; }
+.ew-composer label { font-size: 12px; font-weight: 550; }
+.ew-composer textarea, .ew-composer select { display: block; width: 100%; min-width: 0; border: 1px solid var(--ew-line); border-radius: 5px; padding: 8px; background: var(--ew-surface); color: var(--text-normal); }
+.ew-composer textarea { resize: vertical; min-height: 82px; }
+.ew-actions { flex-wrap: wrap; align-items: center; gap: 7px; }
+.explainweave .ew-actions button { font-size: 11px; }
+.ew-selection, .explainweave blockquote { border-left: 2px solid var(--ew-line); padding-left: 10px; margin: 10px 0; font-size: 12px; color: var(--ew-muted); overflow-wrap: anywhere; }
+.ew-selection .ew-quiet { display: block; }
+.ew-editor-panel { margin-bottom: 12px; }
+.ew-markdown-editor { border: 1px solid var(--ew-line); border-radius: 7px; overflow: hidden; margin-bottom: 10px; background: var(--ew-soft); }
+.explainweave .ew-insert { width: 100%; background: transparent; border: none; box-shadow: none; color: var(--text-faint, #919b93); font-size: 11px; padding: 8px; margin-top: 9px; }
+.explainweave .ew-insert:hover { color: var(--ew-accent); background: var(--ew-soft); }
+.ew-coverage-list { margin-top: 15px; padding: 12px; border-radius: 6px; background: color-mix(in srgb, var(--ew-accent) 5%, var(--ew-surface)); }
+.ew-coverage { margin-top: 8px; font-size: 11px; overflow-wrap: anywhere; }
+.ew-coverage > span:first-child { color: var(--ew-accent); }
+.ew-coverage-stale > span:first-child { color: var(--text-warning, #a16a29); }
+.ew-coverage summary { color: var(--ew-muted); cursor: pointer; margin-top: 3px; font-size: 10px; }
+.ew-draft { margin-block: 16px 10px; border: 1px dashed color-mix(in srgb, var(--ew-accent) 60%, var(--ew-line)); border-radius: 8px; padding: 14px; background: color-mix(in srgb, var(--ew-accent) 4%, var(--ew-surface)); }
+.ew-draft-header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ew-draft-header strong { font-size: 12px; color: var(--ew-accent); }
+.ew-draft-header span { font-size: 10px; color: var(--ew-muted); }
+.ew-draft-header button { margin-left: auto; font-size: 10px; }
+.ew-draft .ew-prose { font-size: 13px; margin-block: 12px; }
+.ew-generation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; margin-top: 12px; background: var(--ew-soft); border-radius: 7px; color: var(--ew-muted); font-size: 11px; }
+.ew-generation button { font-size: 11px; }
+.ew-question-panel { position: sticky; top: 14px; border: 1px solid var(--ew-line); background: var(--ew-soft); padding: 16px; border-radius: 10px; min-width: 0; max-height: calc(100vh - 50px); overflow-y: auto; }
+.ew-panel-top { justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
+.ew-panel-top h3 { font-size: 13px; }
+.ew-panel-top button { font-size: 11px; }
+.ew-question-panel > h3 { font-size: 16px; margin-block: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.ew-question-panel h4 { font-size: 11px; font-weight: 600; color: var(--ew-muted); margin-block: 18px 10px; }
+.ew-question-panel > .ew-actions { margin-block: 12px; }
+.ew-parent-question { display: block; text-align: left; width: 100%; margin-bottom: 12px; font-size: 11px !important; }
+.ew-future-notice { color: var(--ew-accent); font-size: 11px; margin-top: 10px !important; }
+.ew-answer { background: var(--ew-surface); border: 1px solid var(--ew-line); border-radius: 7px; padding: 10px; margin-bottom: 8px; }
+.ew-answer button { font-size: 11px; }
+.ew-empty-hint { color: var(--ew-muted); font-size: 12px; line-height: 1.8; padding-block: 18px; }
+.ew-warning { color: var(--text-warning, #9f722b); font-size: 12px; }
+.ew-error { color: var(--text-error, #b34e48); font-size: 12px; }
+.ew-banner { padding: 10px 12px; border: 1px solid var(--ew-line); border-radius: 7px; margin-top: 14px; display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.ew-empty { padding: 50px 20px; text-align: center; }
+.ew-empty h2 { margin-block: 18px 10px; font-size: 20px; font-weight: 550; }
+.ew-empty p { color: var(--ew-muted); margin-bottom: 20px; }
+.ew-empty .ew-composer { text-align: left; }
+.ew-endnote { text-align: center; color: var(--text-faint, #919b93); font-size: 11px; padding-block: 15px 30px; }
+.ew-app-footer { justify-content: space-between; flex-wrap: wrap; border-top: 1px solid var(--ew-line); padding-top: 12px; font-size: 10px; color: var(--ew-muted); }
+.ew-mode-article .ew-node { border: none; border-radius: 0; border-bottom: 1px solid var(--ew-line); padding: 8px 0 22px; margin-bottom: 22px; }
+.ew-mode-article .ew-node-header { opacity: .7; margin-bottom: 12px; }
+.ew-mode-article .ew-node-current .ew-node-header { opacity: 1; }
+@container (max-width: 1000px) {
+  .ew-workspace.ew-has-panel { grid-template-columns: minmax(0, 1fr) 260px; }
+  .ew-has-panel .ew-outline { display: none; }
+}
+@container (max-width: 700px) {
+  .ew-workspace, .ew-workspace.ew-has-panel { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+  .ew-outline { display: none; }
+  .ew-question-panel { position: static; width: 100%; max-height: none; order: -1; }
+  .ew-node { padding: 16px 14px 8px; }
+  .ew-node-header { gap: 7px; flex-wrap: wrap; }
+  .ew-node-header h2 { font-size: 13px; }
+  .ew-header-actions { width: 100%; }
+  .ew-brand h1 { font-size: 18px; }
+  .ew-question-line { flex-wrap: wrap; }
+  .ew-question-meta { flex-direction: row; }
+  .ew-draft-header button { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { .explainweave * { scroll-behavior: auto !important; } }
