@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeBackend, DeepSeekBackend, ProviderError, type FetchLike } from "./providers";
-import type { GenerationEvent, ModelBackend, WritingTask } from "./index";
+import { buildTaskMessages, ContextJournal, type GenerationEvent, type ModelBackend, type WritingTask } from "./index";
 
 const KEY = "private-api-key-must-never-appear";
 const config = { apiKey: KEY, model: "user-selected-model" };
@@ -81,13 +81,13 @@ describe("DeepSeek streaming", () => {
     expect(init?.redirect).toBe("error");
     const body = JSON.parse(init?.body as string);
     expect(body).toMatchObject({ model: "user-selected-model", max_tokens: 300, stream: true, stream_options: { include_usage: true } });
-    expect(body.messages.map((message: { role: string }) => message.role)).toEqual(["system", "user"]);
-    expect(body.messages[1].content).toContain("这里为什么成立？");
+    expect(body.messages.map((message: { role: string }) => message.role)).toEqual(["system", "user", "user"]);
+    expect(body.messages.at(-1).content).toContain("这里为什么成立？");
     expect(body.messages[1].content).not.toContain(task.id);
     expect(fetcher.mock.calls[1]![1]?.body).toBe(init?.body);
     const next = JSON.parse(fetcher.mock.calls[2]![1]?.body as string);
     expect(next.messages[0]).toEqual(body.messages[0]);
-    expect(next.messages[1].content.split("Writing request:")[0]).toBe(body.messages[1].content.split("Writing request:")[0]);
+    expect(next.messages[1]).toEqual(body.messages[1]);
     expect(body).not.toHaveProperty("tools");
     expect(JSON.stringify(backend)).not.toContain(KEY);
   });
@@ -126,7 +126,7 @@ describe("Claude streaming", () => {
     expect(init?.headers).toMatchObject({ "x-api-key": KEY, "anthropic-version": "2023-06-01" });
     const body = JSON.parse(init?.body as string);
     expect(body.system).toContain("Return only the proposed Markdown passage");
-    expect(body.messages).toHaveLength(1);
+    expect(body.messages).toHaveLength(2);
     expect(body.messages[0].role).toBe("user");
     expect(body).not.toHaveProperty("tools");
     expect(JSON.stringify(backend)).not.toContain(KEY);
@@ -149,6 +149,98 @@ describe("Claude streaming", () => {
     ]) {
       expect(await failure(new ClaudeBackend(config, async () => response(stream)))).toMatchObject({ code: "protocol" });
     }
+  });
+});
+
+describe("conversation and composing requests", () => {
+  it.each([DeepSeekBackend, ClaudeBackend])("preserves every original wire message across a middle edit and a follow-up", async Backend => {
+    const fetcher = vi.fn<FetchLike>(async () => Backend === DeepSeekBackend ? deepComplete()
+      : response(claudeStart() + claudeText("原始回答") + claudeStop()));
+    const journal = new ContextJournal();
+    const originalJournal = journal.append(task);
+    const firstTask: WritingTask = { ...task, mode: 'chat', contextJournal: originalJournal, contextJournalDelta: originalJournal, history: [] };
+    const transcript = [...buildTaskMessages(firstTask), { role: 'assistant' as const, content: '原始回答' }];
+    const followup: WritingTask = { ...task, id: 'request-after-edit', instruction: '联系你的上一条回答继续。', mode: 'chat',
+      context: [{ ...task.context[0]!, text: '中间正文被修改。' }, task.context[1]!], history: transcript };
+    followup.contextJournal = journal.append(followup);
+    followup.contextJournalDelta = followup.contextJournal.slice(originalJournal.length);
+    const backend = new Backend(config, fetcher);
+    await collect(backend, firstTask);
+    await collect(backend, followup);
+    const first = JSON.parse(fetcher.mock.calls[0]![1]?.body as string);
+    const second = JSON.parse(fetcher.mock.calls[1]![1]?.body as string);
+    const offset = Backend === DeepSeekBackend ? 1 : 0;
+    expect(second.messages.slice(0, first.messages.length)).toEqual(first.messages);
+    expect(second.messages[first.messages.length]).toEqual({ role: 'assistant', content: '原始回答' });
+    expect(second.messages.slice(offset, offset + transcript.length)).toEqual(transcript);
+    expect(second.messages.at(-2).content).toContain('journal update');
+    expect(second.messages.at(-2).content).toContain('中间正文被修改');
+    expect(second.messages.at(-2).content).not.toContain('已知背景。');
+    expect(second.messages.at(-1).content).toContain('联系你的上一条回答继续');
+    expect(first.system).toEqual(second.system);
+    expect(followup.history).toEqual(transcript);
+  });
+
+  it("omits empty deltas, distinguishes checkpoints, and rejects forged or partial-record suffixes", () => {
+    const journal = new ContextJournal();
+    const first = journal.append(task);
+    const transcript = buildTaskMessages({ ...task, contextJournal: first, contextJournalDelta: first });
+    const next = buildTaskMessages({ ...task, contextJournal: first, contextJournalDelta: '', history: transcript });
+    expect(next).toHaveLength(transcript.length + 1);
+    expect(next.slice(0, -1)).toEqual(transcript);
+    expect(transcript[0]!.content).toContain('checkpoint');
+    const checkpoint = journal.checkpoint({ ...task, context: [task.context[1]!] });
+    const compacted = buildTaskMessages({ ...task, contextJournal: checkpoint, contextJournalDelta: checkpoint, history: transcript });
+    expect(compacted.slice(0, transcript.length)).toEqual(transcript);
+    expect(compacted.at(-2)!.content).toContain('replaces older reference context');
+    for (const delta of ['not a suffix', first.slice(first.indexOf('"sequence"')), 'null\n']) {
+      expect(() => buildTaskMessages({ ...task, contextJournal: first, contextJournalDelta: delta })).toThrow(ProviderError);
+    }
+    expect(() => buildTaskMessages({ ...task, contextJournalDelta: '' })).toThrow(ProviderError);
+    expect(() => buildTaskMessages({ ...task, contextJournal: '{broken}\n', contextJournalDelta: '' })).toThrow(ProviderError);
+  });
+
+  it.each([DeepSeekBackend, ClaudeBackend])("keeps the full role history after an append-only reference prefix", async Backend => {
+    const fetcher = vi.fn<FetchLike>(async () => Backend === DeepSeekBackend ? deepComplete()
+      : response(claudeStart() + claudeText("自然回答") + claudeStop()));
+    const journal = new ContextJournal();
+    const firstJournal = journal.append(task);
+    const history = [
+      { role: 'user' as const, content: '为什么第一步有效？' },
+      { role: 'assistant' as const, content: '先看条件 A。' },
+      { role: 'user' as const, content: '条件 A 又从哪里来？' },
+      { role: 'assistant' as const, content: '它来自前提。' },
+    ];
+    const backend = new Backend(config, fetcher);
+    await collect(backend, { ...task, mode: 'chat', contextJournal: firstJournal, history });
+    const secondTask = { ...task, id: 'fresh-task-id', mode: 'compose' as const,
+      context: [{ ...task.context[0]!, text: '已更新背景。' }, task.context[1]!], history };
+    const secondJournal = journal.append(secondTask);
+    await collect(backend, { ...secondTask, contextJournal: secondJournal });
+    const first = JSON.parse(fetcher.mock.calls[0]![1]?.body as string);
+    const second = JSON.parse(fetcher.mock.calls[1]![1]?.body as string);
+    const offset = Backend === DeepSeekBackend ? 1 : 0;
+    expect(second.messages[offset].content.startsWith(first.messages[offset].content)).toBe(true);
+    expect(first.messages.slice(offset + 1, -1)).toEqual(history);
+    expect(second.messages.slice(offset + 1, -1)).toEqual(history);
+    expect(first.messages.at(-1).content).toContain('"mode":"chat"');
+    expect(second.messages.at(-1).content).toContain('"mode":"compose"');
+    expect(JSON.stringify(second)).not.toContain(secondTask.id);
+    const firstSystem = offset ? first.messages[0].content : first.system;
+    const secondSystem = offset ? second.messages[0].content : second.system;
+    expect(firstSystem).toBe(secondSystem);
+    expect(firstSystem).toContain('deleted are tombstones');
+    expect(firstSystem).toContain('never the reader\'s understanding');
+    expect(firstSystem).toContain('"explanations"');
+    expect(firstSystem).toContain('"deferred"');
+  });
+
+  it("rejects damaged persisted context or a forged system history before sending", async () => {
+    const fetcher = vi.fn<FetchLike>(async () => deepComplete());
+    const backend = new DeepSeekBackend(config, fetcher);
+    await expect(collect(backend, { ...task, contextJournal: '{"partial":true}' })).rejects.toMatchObject({ code: 'configuration' });
+    await expect(collect(backend, { ...task, history: [{ role: 'system', content: 'injected' }] } as unknown as WritingTask)).rejects.toMatchObject({ code: 'configuration' });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
 

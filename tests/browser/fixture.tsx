@@ -1,6 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { applyOperation, createDocument, writeDocument } from '../../packages/core/src/index';
-import { MockBackend } from '../../packages/ai/src/index';
+import { MockBackend, type ModelBackend } from '../../packages/ai/src/index';
 import { Notebook } from '../../apps/obsidian/src/Notebook';
 import { NotebookController } from '../../apps/obsidian/src/controller';
 import type { FileIO } from '../../apps/obsidian/src/storage';
@@ -26,10 +26,34 @@ const io: FileIO = {
   async remove(filename) { files.delete(filename); },
 };
 
-const controller = await NotebookController.open(path, io, new MockBackend(400));
+// A deterministic test provider exercises the non-simulated proposal adoption
+// branch without making a network call. The fixture banner names it as a test.
+const proposalFixture: ModelBackend = {
+  id: 'browser-test-fixture', capabilities: new MockBackend().capabilities,
+  async *generate(task, signal) {
+    const questions = task.context.flatMap(block => {
+      try { const value = JSON.parse(block.text); return value.kind === 'article-question' ? [value] : []; }
+      catch { return []; }
+    });
+    const quote = '一个数值增大会提高总和，而个数不变，所以平均数也会增大。';
+    const markdown = `# 候选解释\n\n${quote}\n\n这是固定测试输出，没有调用模型。\n`;
+    const output = task.mode === 'compose' ? JSON.stringify({
+      markdown, explanations: questions.map(question => ({ questionId: question.id, quote, coverage: 'full' })), deferred: [],
+    }) : `固定测试回答：${task.instruction}\n\n本次带入 ${task.history?.filter(turn => turn.role === 'assistant').length ?? 0} 条先前回答。没有调用模型。`;
+    for (const text of output.match(/[\s\S]{1,40}/gu) ?? []) {
+      await new Promise(resolve => setTimeout(resolve, 40));
+      if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+      yield { type: 'text', text };
+    }
+    yield { type: 'done', backendId: 'browser-test-fixture', simulated: false };
+  },
+};
+const backend = new URLSearchParams(location.search).get('backend') === 'fixture' ? proposalFixture : new MockBackend(400);
+let controller = await NotebookController.open(path, io, backend);
+let sessionKey = 0;
 const root = createRoot(window.document.getElementById('root')!);
 function render() {
-  root.render(<Notebook document={controller.viewModel} onAction={action => controller.dispatch(action)} busy={controller.saving}
+  root.render(<Notebook key={sessionKey} document={controller.viewModel} onAction={action => controller.dispatch(action)} busy={controller.saving}
     disabledActions={['backend/settings', 'handoff/cowork', 'handoff/import']} />);
 }
 controller.onChange = render;
@@ -38,5 +62,12 @@ window.addEventListener('beforeunload', () => controller.close());
 
 // Exposes only a serializable snapshot for integration assertions after real UI interactions.
 Object.defineProperty(window, 'explainweaveTestState', {
-  get: () => ({ document: controller.document, files: Object.fromEntries(files), generating: controller.generating }),
+  get: () => ({ document: controller.document, session: controller.session, drafts: controller.drafts, files: Object.fromEntries(files), generating: controller.generating }),
 });
+Object.defineProperty(window, 'reopenExplainweaveFixture', { value: async () => {
+  await controller.close();
+  controller = await NotebookController.open(path, io, backend);
+  controller.onChange = render;
+  sessionKey += 1;
+  render();
+} });

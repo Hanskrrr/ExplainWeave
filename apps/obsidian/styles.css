@@ -106,6 +106,33 @@
 .ew-draft .ew-prose { font-size: 13px; margin-block: 12px; }
 .ew-generation { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px; margin-top: 12px; background: var(--ew-soft); border-radius: 7px; color: var(--ew-muted); font-size: 11px; }
 .ew-generation button { font-size: 11px; }
+.ew-insert-actions { display: flex; align-items: center; gap: 6px; }
+.explainweave .ew-insert-actions .ew-insert { width: auto; flex: 1; }
+.ew-node-plans, .ew-question-plan { padding: 12px; margin-top: 14px; border: 1px solid var(--ew-line); border-radius: 7px; background: var(--ew-soft); }
+.ew-node-plan { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-block: 8px; font-size: 11px; }
+.ew-node-plan .ew-hint { flex-basis: 100%; margin-top: 0 !important; }
+.explainweave .ew-plan-question { flex: 1; min-width: 100px; text-align: left; padding: 2px 0; background: transparent; border: none; box-shadow: none; font-size: 12px; }
+.ew-plan-summary { font-size: 11px; margin-bottom: 10px; }
+.ew-plan-summary strong { font-weight: 550; }
+.ew-plan-summary > p { margin-top: 5px; }
+.ew-draft-proposals { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--ew-line); font-size: 12px; }
+.ew-draft-proposals > div, .ew-draft-proposals > p + p { margin-top: 8px; }
+.ew-draft-proposals strong { font-weight: 550; color: var(--ew-accent); }
+.ew-discussion { margin-top: 12px; min-width: 0; }
+.ew-chat-transcript { max-height: 380px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding-right: 2px; }
+.ew-chat-turn { padding: 12px; border-radius: 8px; margin-bottom: 10px; min-width: 0; overflow-wrap: anywhere; }
+.ew-chat-turn-user { margin-left: 14px; background: color-mix(in srgb, var(--ew-accent) 8%, var(--ew-surface)); }
+.ew-chat-turn-assistant { background: var(--ew-surface); border: 1px solid var(--ew-line); }
+.ew-chat-turn-header { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; color: var(--ew-muted); font-size: 10px; margin-bottom: 8px; }
+.ew-chat-turn-header strong { color: var(--text-normal); font-weight: 550; }
+.ew-chat-turn .ew-prose { font-size: 12px; line-height: 1.8; }
+.ew-chat-composer { margin-top: 10px; display: grid; gap: 8px; }
+.ew-chat-composer > label { font-size: 11px; font-weight: 550; }
+.ew-chat-composer > textarea { width: 100%; min-width: 0; resize: vertical; min-height: 82px; padding: 9px; border: 1px solid var(--ew-line); border-radius: 7px; background: var(--ew-surface); color: var(--text-normal); font: inherit; font-size: 12px; }
+.ew-inherited-discussion { padding: 10px; border: 1px dashed var(--ew-line); border-radius: 7px; font-size: 11px; margin-bottom: 12px; }
+.ew-inherited-discussion > summary { cursor: pointer; color: var(--ew-muted); }
+.ew-inherited-discussion .ew-chat-turn { padding: 9px; }
+.ew-article-discussion .ew-chat-transcript { max-height: 48vh; }
 .ew-question-panel { position: sticky; top: 14px; border: 1px solid var(--ew-line); background: var(--ew-soft); padding: 16px; border-radius: 10px; min-width: 0; max-height: calc(100vh - 50px); overflow-y: auto; }
 .ew-panel-top { justify-content: space-between; align-items: baseline; margin-bottom: 16px; }
 .ew-panel-top h3 { font-size: 13px; }

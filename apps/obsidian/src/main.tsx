@@ -14,6 +14,7 @@ const writeActions: NotebookAction['type'][] = [
   'node/read', 'branch/open', 'branch/close', 'draft/request',
   'node/update', 'node/insert', 'node/move', 'node/delete', 'node/split', 'node/merge-next',
   'question/add', 'question/update', 'coverage/add', 'coverage/remove', 'draft/accept', 'history/undo',
+  'chat/send', 'chat/compose', 'question/defer', 'question/undefer',
 ];
 
 class ConversionPreview extends Modal {
@@ -179,8 +180,12 @@ class ExplainWeaveView extends ItemView {
       const oldDrafts = oldPath.replace(/\.md$/i, '.explainweave.drafts.json');
       const newDrafts = file.path.replace(/\.md$/i, '.explainweave.drafts.json');
       if (await this.app.vault.adapter.exists(newDrafts)) throw new Error('新文件名已有草稿，已停止自动关联。');
+      const oldSessions = oldPath.replace(/\.md$/i, '.explainweave.sessions.json');
+      const newSessions = file.path.replace(/\.md$/i, '.explainweave.sessions.json');
+      if (await this.app.vault.adapter.exists(newSessions)) throw new Error('新文件名已有文章讨论，已停止自动关联。');
       if (await this.app.vault.adapter.exists(old.sidecar)) await this.app.vault.adapter.rename(old.sidecar, next.sidecar);
       if (await this.app.vault.adapter.exists(oldDrafts)) await this.app.vault.adapter.rename(oldDrafts, newDrafts);
+      if (await this.app.vault.adapter.exists(oldSessions)) await this.app.vault.adapter.rename(oldSessions, newSessions);
       this.controller = undefined;
       await this.openFile(file);
     } catch (error) {

@@ -1,9 +1,13 @@
 import type { FileIO } from './storage';
+import { parseWritingProposal, type WritingProposal } from '@explainweave/ai';
 
 export interface SavedDraft {
   id: string; nodeId: string; markdown: string; questionId?: string;
   basedOn: string; reason: string; stale: boolean;
   simulated?: boolean; providerLabel?: string;
+  explanations?: WritingProposal['explanations'];
+  deferred?: WritingProposal['deferred'];
+  validationError?: string;
 }
 
 export class DraftFile {
@@ -23,6 +27,8 @@ export class DraftFile {
     const drafts = value.drafts;
     for (const draft of drafts) {
       if (!draft || typeof draft !== 'object' || ['id', 'nodeId', 'markdown', 'basedOn', 'reason'].some(key => typeof draft[key] !== 'string') || typeof draft.stale !== 'boolean' || (draft.questionId !== undefined && typeof draft.questionId !== 'string') || (draft.simulated !== undefined && typeof draft.simulated !== 'boolean') || (draft.providerLabel !== undefined && typeof draft.providerLabel !== 'string')) throw new Error('草稿数据无效，未覆盖原文件。');
+      if (draft.validationError !== undefined && typeof draft.validationError !== 'string') throw new Error('草稿校验状态无效。');
+      if (draft.explanations !== undefined || draft.deferred !== undefined) parseWritingProposal(JSON.stringify({ markdown: draft.markdown, explanations: draft.explanations ?? [], deferred: draft.deferred ?? [] }));
     }
     if (new Set(drafts.map(draft => draft.id)).size !== drafts.length) throw new Error('草稿标识重复，未覆盖原文件。');
     this.expected = raw;

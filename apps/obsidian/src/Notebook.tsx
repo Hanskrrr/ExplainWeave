@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { MarkdownEditor } from './editor';
+import type { Discussion, QuestionPlan } from './session-types';
 
 export type QuestionStatus = 'unexplained' | 'partial' | 'explained' | 'review';
 export interface NotebookNode { id: string; title: string; markdown: string }
 export interface NotebookQuestion {
   id: string; nodeId: string; text: string; parentQuestionId?: string; quote?: string;
-  status: QuestionStatus; futureAnswerCount?: number;
+  status: QuestionStatus; futureAnswerCount?: number; revision?: number;
 }
 export interface NotebookCoverage {
   id: string; questionId: string; nodeId: string; quote: string;
@@ -14,7 +15,9 @@ export interface NotebookCoverage {
 }
 export interface NotebookDraft {
   id: string; nodeId: string; markdown: string; questionId?: string; reason?: string; stale?: boolean;
-  simulated?: boolean; providerLabel?: string;
+  simulated?: boolean; providerLabel?: string; validationError?: string;
+  explanations?: { questionId: string; quote: string; coverage: 'partial' | 'full' }[];
+  deferred?: { questionId: string; nodeId: string; reason?: string }[];
 }
 export interface NotebookDocument {
   title: string; sourcePath?: string; nodes: NotebookNode[]; questions: NotebookQuestion[];
@@ -23,6 +26,7 @@ export interface NotebookDocument {
   generatingNodeId?: string;
   backendLabel?: string; simulatedBackend?: boolean;
   latestUsage?: { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number };
+  discussions?: Discussion[]; plans?: QuestionPlan[]; generatingDiscussionId?: string; generating?: boolean;
 }
 export type NotebookAction =
   | { type: 'node/read'; nodeId: string }
@@ -38,7 +42,11 @@ export type NotebookAction =
   | { type: 'branch/close' }
   | { type: 'coverage/add'; questionId: string; nodeId: string; quote: string; degree: 'partial' | 'full' }
   | { type: 'coverage/remove'; coverageId: string }
-  | { type: 'draft/request'; nodeId: string; questionId?: string }
+  | { type: 'draft/request'; nodeId: string; questionId?: string; instruction?: string; questionIds?: string[] }
+  | { type: 'chat/send'; questionId?: string; text: string }
+  | { type: 'chat/compose'; questionId?: string; nodeId: string; instruction?: string }
+  | { type: 'question/defer'; questionId: string; nodeId: string; reason?: string }
+  | { type: 'question/undefer'; questionId: string }
   | { type: 'draft/cancel' }
   | { type: 'draft/accept'; draftId: string }
   | { type: 'draft/discard'; draftId: string }
@@ -58,6 +66,18 @@ type Enabled = (type: NotebookAction['type']) => boolean;
 const statusLabels: Record<QuestionStatus, string> = {
   unexplained: '未解释', partial: '部分解释', explained: '已解释', review: '待检查',
 };
+
+function isGenerating(document: NotebookDocument): boolean {
+  return document.generating ?? Boolean(document.generatingNodeId || document.generatingDiscussionId);
+}
+
+function isPlanStale(plan: QuestionPlan, document: NotebookDocument): boolean {
+  const question = document.questions.find(item => item.id === plan.questionId);
+  if (!question || (question.revision !== undefined && plan.questionRevision !== question.revision)) return true;
+  const origin = document.nodes.findIndex(node => node.id === question.nodeId);
+  const target = document.nodes.findIndex(node => node.id === plan.nodeId);
+  return origin < 0 || target <= origin;
+}
 
 function Status({ question }: { question: NotebookQuestion }) {
   return <span className={`ew-status ew-status-${question.status}`}>{statusLabels[question.status]}</span>;
@@ -89,6 +109,184 @@ function MarkdownContent({ text, renderMarkdown }: {
   return <div className={`ew-prose markdown-rendered${renderMarkdown ? '' : ' ew-plain-markdown'}`} ref={mount}>
     {renderMarkdown ? null : text}
   </div>;
+}
+
+function DiscussionTurns({ discussion, renderMarkdown }: {
+  discussion: Discussion; renderMarkdown?: NotebookProps['renderMarkdown'];
+}) {
+  return <>{discussion.turns.map(turn => {
+    const structuredPending = turn.kind === 'compose' && turn.status !== 'complete';
+    return <article key={turn.id} className={`ew-chat-turn ew-chat-turn-${turn.role}`}>
+    <div className="ew-chat-turn-header"><strong>{turn.role === 'user' ? '你' : turn.providerLabel ?? 'AI'}</strong>
+      {turn.role === 'assistant' && (turn.simulated ?? true) && <span>模拟回答</span>}
+      {turn.status === 'streaming' && <span role="status">正在回答…</span>}
+      {turn.status === 'cancelled' && <span>已取消 · 保留部分回答</span>}
+      {turn.status === 'error' && <span className="ew-warning">回答中断 · 已保留收到的内容</span>}
+    </div>
+    {structuredPending ? <p className="ew-hint">{turn.status === 'streaming' ? '正在组织候选正文与解释关联…' : '正文整理未完成。讨论记录仍保留，可以重新发起整理。'}</p> :
+      turn.markdown ? <MarkdownContent text={turn.markdown} renderMarkdown={renderMarkdown} /> :
+      <p className="ew-hint">{turn.status === 'streaming' ? '正在组织解释…' : '本次没有收到回答正文。'}</p>}
+  </article>; })}</>;
+}
+
+function DiscussionView({ document, questionId, act, enabled, renderMarkdown }: {
+  document: NotebookDocument; questionId?: string; act: Act; enabled: Enabled;
+  renderMarkdown?: NotebookProps['renderMarkdown'];
+}) {
+  const formId = useId();
+  const discussion = document.discussions?.find(item => item.questionId === questionId);
+  const question = document.questions.find(item => item.id === questionId);
+  const [text, setText] = useState('');
+  const [sending, setSending] = useState(false);
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [target, setTarget] = useState(document.cursorNodeId ?? question?.nodeId ?? document.nodes[0]?.id ?? '');
+  const [instruction, setInstruction] = useState('');
+  const [composing, setComposing] = useState(false);
+  const transcript = useRef<HTMLDivElement>(null);
+  const followBottom = useRef(true);
+  const active = Boolean(discussion && document.generatingDiscussionId === discussion.id);
+  const selectedTarget = document.nodes.some(node => node.id === target) ? target : document.nodes[0]?.id ?? '';
+  const inherited: { title: string; discussion: Discussion }[] = [];
+  if (discussion?.inheritedTurnIds !== undefined) {
+    // Display exactly the references forked with this branch, not later parent turns.
+    const turns = new Map((document.discussions ?? []).flatMap(source =>
+      source.turns.map(turn => [turn.id, { source, turn }] as const)));
+    const groups = new Map<string, { title: string; discussion: Discussion }>();
+    for (const turnId of discussion.inheritedTurnIds) {
+      const entry = turns.get(turnId);
+      if (!entry) continue;
+      let group = groups.get(entry.source.id);
+      if (!group) {
+        group = {
+          title: document.questions.find(item => item.id === entry.source.questionId)?.text
+            ?? (entry.source.questionId ? '先前问题的讨论' : '文章讨论'),
+          discussion: { ...entry.source, turns: [] },
+        };
+        groups.set(entry.source.id, group);
+      }
+      group.discussion.turns.push(entry.turn);
+    }
+    inherited.push(...groups.values());
+  } else if (!discussion) {
+    // Before the first send there is no frozen branch yet; preview its current ancestors.
+    const seen = new Set<string>();
+    let parentId = question?.parentQuestionId;
+    while (parentId && !seen.has(parentId)) {
+      seen.add(parentId);
+      const parent = document.questions.find(item => item.id === parentId);
+      if (!parent) break;
+      const parentDiscussion = document.discussions?.find(item => item.questionId === parent.id);
+      if (parentDiscussion?.turns.length) inherited.unshift({ title: parent.text, discussion: parentDiscussion });
+      parentId = parent.parentQuestionId;
+    }
+  }
+  const lastTurn = discussion?.turns.at(-1);
+  useEffect(() => {
+    if (followBottom.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+  }, [discussion?.turns.length, lastTurn?.markdown]);
+  async function send(event?: FormEvent) {
+    event?.preventDefault();
+    if (!text.trim() || sending || !enabled('chat/send')) return;
+    setSending(true);
+    try {
+      if (await act({ type: 'chat/send', ...(questionId ? { questionId } : {}), text: text.trim() })) {
+        setText(''); followBottom.current = true;
+      }
+    } finally { setSending(false); }
+  }
+  async function compose(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedTarget || composing || !enabled('chat/compose')) return;
+    setComposing(true);
+    try {
+      if (await act({ type: 'chat/compose', ...(questionId ? { questionId } : {}), nodeId: selectedTarget,
+        ...(instruction.trim() ? { instruction: instruction.trim() } : {}) })) setComposeOpen(false);
+    } finally { setComposing(false); }
+  }
+  return <section className="ew-discussion" aria-label={questionId ? '这个问题的讨论' : '文章讨论'}>
+    {!!inherited.length && <details className="ew-inherited-discussion"><summary>继承父问题讨论 · {inherited.reduce((count, item) => count + item.discussion.turns.length, 0)} 条记录</summary>
+      <p className="ew-hint">{discussion
+        ? '这条支线保留首次发送时继承的背景；父讨论后来的消息可返回父问题查看。'
+        : '首次发送时会继承下面的父讨论，之后这份背景会固定保留。'}</p>
+      {inherited.map(item => <div key={item.discussion.id}><h4>{item.title}</h4>
+        <DiscussionTurns discussion={item.discussion} renderMarkdown={renderMarkdown} /></div>)}
+    </details>}
+    <div className="ew-chat-transcript" ref={transcript} aria-label="讨论记录" onScroll={() => {
+      const element = transcript.current;
+      if (element) followBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 70;
+    }}>
+      {discussion?.turns.length ? <DiscussionTurns discussion={discussion} renderMarkdown={renderMarkdown} /> :
+        <p className="ew-empty-hint">{questionId ? '可以围绕这个问题持续追问。讨论留在这里，正文需要采用草稿后才会改变。' : '和 AI 讨论文章的主线、缺失的背景或表达方式，再把有用的解释整理进正文。'}</p>}
+    </div>
+    <form className="ew-chat-composer" onSubmit={send}>
+      <label htmlFor={`${formId}-message`}>{questionId ? '继续讨论这个问题' : '讨论这篇文章'}</label>
+      <textarea id={`${formId}-message`} rows={3} value={text} onChange={event => setText(event.target.value)}
+        placeholder={questionId ? '例如：这一步为什么成立？可以换个例子吗？' : '例如：从第二节到第三节，是否缺少一个必要的解释？'}
+        onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+      <div className="ew-actions"><button type="submit" className="mod-cta" disabled={!text.trim() || sending || !enabled('chat/send')}>发送</button>
+        {active && <button type="button" disabled={!enabled('draft/cancel')} onClick={() => void act({ type: 'draft/cancel' })}>取消回答</button>}
+        {!!discussion?.turns.some(turn => turn.role === 'assistant' && turn.markdown.trim()) &&
+          <button type="button" aria-expanded={composeOpen} onClick={() => setComposeOpen(!composeOpen)}>整理成正文节点</button>}
+      </div>
+      {isGenerating(document) && !active && <p className="ew-hint">另一个任务正在生成。可以先写下下一条消息，完成后发送。</p>}
+    </form>
+    {composeOpen && <form className="ew-composer" onSubmit={compose}>
+      <label htmlFor={`${formId}-target`}>插入到哪个节点之后？</label>
+      <select id={`${formId}-target`} value={selectedTarget} onChange={event => setTarget(event.target.value)}>
+        {document.nodes.map((node, index) => <option key={node.id} value={node.id}>{index + 1}. {node.title}</option>)}
+      </select>
+      <label htmlFor={`${formId}-instruction`}>整理要求（可选）</label>
+      <textarea id={`${formId}-instruction`} rows={2} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder="例如：保留刚才的例子，补上与下一段的衔接。" />
+      <p className="ew-hint">会先生成正文草稿；预览并采用后，才会插入文章。</p>
+      <div className="ew-actions"><button type="submit" className="mod-cta" disabled={!selectedTarget || composing || !enabled('chat/compose')}>生成正文草稿</button>
+        <button type="button" onClick={() => setComposeOpen(false)}>取消整理</button></div>
+    </form>}
+  </section>;
+}
+
+function QuestionPlanEditor({ question, document, act, enabled }: {
+  question: NotebookQuestion; document: NotebookDocument; act: Act; enabled: Enabled;
+}) {
+  const id = useId();
+  const plan = document.plans?.find(item => item.questionId === question.id);
+  const origin = document.nodes.findIndex(node => node.id === question.nodeId);
+  const candidates = origin < 0 ? [] : document.nodes.slice(origin + 1);
+  const [editing, setEditing] = useState(false);
+  const [target, setTarget] = useState(plan?.nodeId ?? candidates[0]?.id ?? '');
+  const [reason, setReason] = useState(plan?.reason ?? '');
+  const [saving, setSaving] = useState(false);
+  const selectedTarget = candidates.some(node => node.id === target) ? target : candidates[0]?.id ?? '';
+  const targetTitle = document.nodes.find(node => node.id === plan?.nodeId)?.title;
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!selectedTarget || saving || !enabled('question/defer')) return;
+    setSaving(true);
+    try {
+      if (await act({ type: 'question/defer', questionId: question.id, nodeId: selectedTarget,
+        ...(reason.trim() ? { reason: reason.trim() } : {}) })) setEditing(false);
+    } finally { setSaving(false); }
+  }
+  return <section className="ew-question-plan" aria-label="后续解释安排">
+    {plan && <div className="ew-plan-summary"><strong>待处理 · 安排在「{targetTitle ?? '已移除的节点'}」解释</strong>
+      {plan.reason && <p>{plan.reason}</p>}
+      {isPlanStale(plan, document) && <p className="ew-warning">安排待检查：问题或节点位置已改变，请重新安排。</p>}
+      <p className="ew-hint">安排只记录后续意图，不表示正文已经解释。</p>
+    </div>}
+    {editing ? <form className="ew-composer" onSubmit={save}>
+      <label htmlFor={`${id}-node`}>安排在哪个后续节点？</label>
+      <select id={`${id}-node`} value={selectedTarget} onChange={event => setTarget(event.target.value)}>
+        {candidates.map(node => <option key={node.id} value={node.id}>{node.title}</option>)}
+      </select>
+      <label htmlFor={`${id}-reason`}>安排原因（可选）</label>
+      <textarea id={`${id}-reason`} rows={2} value={reason} onChange={event => setReason(event.target.value)} />
+      <div className="ew-actions"><button type="submit" className="mod-cta" disabled={!selectedTarget || saving || !enabled('question/defer')}>保存安排</button>
+        <button type="button" onClick={() => setEditing(false)}>取消</button></div>
+    </form> : <div className="ew-actions"><button disabled={!candidates.length || !enabled('question/defer')}
+      onClick={() => setEditing(true)}>{plan ? '修改安排' : '安排在后续节点解释'}</button>
+      {plan && <button disabled={!enabled('question/undefer')} onClick={() => void act({ type: 'question/undefer', questionId: question.id })}>取消安排</button>}
+    </div>}
+    {!candidates.length && <p className="ew-hint">后面还没有节点，可以先添加一个后续节点。</p>}
+  </section>;
 }
 
 function Composer({ label, placeholder, initialValue = '', submitLabel, onSubmit, onCancel, children, disabled = false }: {
@@ -192,8 +390,9 @@ function QuestionLine({ question, onOpen }: { question: NotebookQuestion; onOpen
   </button>;
 }
 
-function DraftCard({ draft, act, enabled, renderMarkdown, generating }: {
+function DraftCard({ draft, act, enabled, renderMarkdown, generating, streaming, document }: {
   draft: NotebookDraft; act: Act; enabled: Enabled; renderMarkdown?: NotebookProps['renderMarkdown']; generating: boolean;
+  streaming: boolean; document: NotebookDocument;
 }) {
   const [expanded, setExpanded] = useState(true);
   const simulated = draft.simulated ?? true;
@@ -202,9 +401,24 @@ function DraftCard({ draft, act, enabled, renderMarkdown, generating }: {
       <span>{simulated ? '演示内容 · 未调用模型' : `来源：${draft.providerLabel ?? '未记录'}`}</span>
       <button aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? '收起预览' : '展开预览'}</button></div>
     {draft.reason && <p className="ew-hint">{draft.reason}</p>}
-    {expanded && <MarkdownContent text={draft.markdown} renderMarkdown={renderMarkdown} />}
+    {streaming ? <p className="ew-hint" role="status">正在组织候选节点与解释关联…</p> :
+      draft.validationError ? <p className="ew-warning">{draft.validationError}</p> :
+        expanded && <MarkdownContent text={draft.markdown} renderMarkdown={renderMarkdown} />}
+    {!streaming && !!draft.explanations?.length && <div className="ew-draft-proposals">
+      <p className="ew-eyebrow">AI 建议解释以下问题</p>
+      {draft.explanations.map((item, index) => <div key={`${item.questionId}-${index}`}>
+        <p><strong>{item.coverage === 'full' ? '拟完整解释' : '拟部分解释'}</strong> · {document.questions.find(question => question.id === item.questionId)?.text ?? '原问题已不存在'}</p>
+        <blockquote>{item.quote}</blockquote>
+      </div>)}
+      <p className="ew-hint">采用正文时会同时建立这些解释关联；草稿尚未改变问题状态。</p>
+    </div>}
+    {!streaming && !!draft.deferred?.length && <div className="ew-draft-proposals"><p className="ew-eyebrow">AI 建议后续安排</p>
+      {draft.deferred.map((item, index) => <p key={`${item.questionId}-${index}`}>{document.questions.find(question => question.id === item.questionId)?.text ?? '原问题已不存在'}
+        {' → '}{document.nodes.find(node => node.id === item.nodeId)?.title ?? '目标节点已不存在'}{item.reason ? ` · ${item.reason}` : ''}</p>)}
+      <p className="ew-hint">这些安排将在采用草稿时保存，仍属于待处理事项。</p>
+    </div>}
     {draft.stale && <p className="ew-warning">生成草稿后，相关正文已经改变。请重新生成，避免采用过期内容。</p>}
-    <div className="ew-actions"><button className="mod-cta" disabled={generating || !draft.markdown.trim() || draft.stale || !enabled('draft/accept')}
+    <div className="ew-actions"><button className="mod-cta" disabled={generating || Boolean(draft.validationError) || !draft.markdown.trim() || draft.stale || !enabled('draft/accept')}
       title={generating ? '等待生成完成，或先取消生成' : undefined}
       onClick={() => void act({ type: 'draft/accept', draftId: draft.id })}>采用为后续解释</button>
       <button disabled={generating || !enabled('draft/discard')} title={generating ? '请先取消生成' : undefined}
@@ -218,7 +432,7 @@ function NodeCard({ node, index, document, mode, act, enabled, renderMarkdown, o
   openQuestion: (question: NotebookQuestion) => void; register: (element: HTMLElement | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [composer, setComposer] = useState<'question' | 'insert' | 'coverage' | null>(null);
+  const [composer, setComposer] = useState<'question' | 'insert' | 'ai-insert' | 'coverage' | null>(null);
   const [quote, setQuote] = useState('');
   const [questionsOpen, setQuestionsOpen] = useState(true);
   const body = useRef<HTMLDivElement>(null);
@@ -226,6 +440,8 @@ function NodeCard({ node, index, document, mode, act, enabled, renderMarkdown, o
   const earlier = new Set(document.nodes.slice(0, index + 1).map(item => item.id));
   const candidates = document.questions.filter(question => earlier.has(question.nodeId));
   const coverage = document.coverage.filter(item => item.nodeId === node.id);
+  const plans = (document.plans ?? []).filter(plan => plan.nodeId === node.id);
+  const currentPlans = plans.filter(plan => !isPlanStale(plan, document));
   const isCurrent = document.cursorNodeId === node.id;
   const simulated = document.simulatedBackend ?? true;
   function captureSelection() {
@@ -270,6 +486,19 @@ function NodeCard({ node, index, document, mode, act, enabled, renderMarkdown, o
       {quote && !node.markdown.includes(quote) && <p className="ew-warning">展示文本与 Markdown 原文不同。请在编辑器中选取原文，或去掉引用后记录问题。</p>}
     </Composer>}
     {composer === 'coverage' && <CoverageComposer node={node} questions={candidates} initialQuote={quote} act={act} onClose={() => setComposer(null)} />}
+    {!!plans.length && <div className="ew-node-plans"><p className="ew-eyebrow">这里承接的待解释问题</p>
+      {plans.map(plan => {
+        const question = document.questions.find(item => item.id === plan.questionId);
+        return <div key={plan.questionId} className="ew-node-plan">
+          <button className="ew-plan-question" disabled={!question} onClick={() => { if (question) openQuestion(question); }}>{question?.text ?? '原问题已不存在'}</button>
+          <span className={isPlanStale(plan, document) ? 'ew-warning' : 'ew-muted'}>{isPlanStale(plan, document) ? '安排待检查' : '待处理'}</span>
+          {plan.reason && <p className="ew-hint">{plan.reason}</p>}
+        </div>;
+      })}
+      <div className="ew-actions"><button disabled={!currentPlans.length || !enabled('draft/request')}
+        onClick={() => void act({ type: 'draft/request', nodeId: node.id, questionIds: currentPlans.map(plan => plan.questionId) })}>解释这些问题</button></div>
+      <p className="ew-hint">先生成候选正文。安排本身不表示问题已经得到解释。</p>
+    </div>}
     {!!coverage.length && <div className="ew-coverage-list">
       <p className="ew-eyebrow">这一节点提供的解释</p>
       {coverage.map(item => <div key={item.id} className={`ew-coverage${item.stale ? ' ew-coverage-stale' : ''}`}>
@@ -285,18 +514,26 @@ function NodeCard({ node, index, document, mode, act, enabled, renderMarkdown, o
       {questionsOpen && questions.map(question => <QuestionLine key={question.id} question={question} onOpen={() => openQuestion(question)} />)}
     </div>}
     {(document.drafts ?? []).filter(draft => draft.nodeId === node.id).map(draft =>
-      <DraftCard key={draft.id} draft={draft} act={act} enabled={enabled} renderMarkdown={renderMarkdown} generating={Boolean(document.generatingNodeId)} />)}
+      <DraftCard key={draft.id} draft={draft} act={act} enabled={enabled} renderMarkdown={renderMarkdown} generating={isGenerating(document)} document={document}
+        streaming={isGenerating(document) && document.generatingNodeId === node.id && document.drafts?.at(-1)?.id === draft.id} />)}
     {document.generatingNodeId === node.id && <div className="ew-generation" role="status"><span>{simulated ? '正在准备模拟解释…' : '正在生成解释…'} 你可以继续编辑。</span>
       <button disabled={!enabled('draft/cancel')} onClick={() => void act({ type: 'draft/cancel' })}>取消生成</button></div>}
     {composer === 'insert' ? <Composer label="添加一段解释" placeholder="支持 Markdown。写下连接前后文的一步。" submitLabel="添加节点"
       onSubmit={markdown => act({ type: 'node/insert', afterNodeId: node.id, markdown })} onCancel={() => setComposer(null)} /> :
-      mode === 'notebook' && <button className="ew-insert" disabled={!enabled('node/insert')} onClick={() => setComposer('insert')}>＋ 在这里添加节点</button>}
+      composer === 'ai-insert' ? <Composer label="希望这里解释什么？" placeholder="例如：补上平均数与极端值之间的推导，用三个数字举例。" submitLabel="生成节点草稿"
+        disabled={!enabled('draft/request')} onSubmit={instruction => act({ type: 'draft/request', nodeId: node.id, instruction })} onCancel={() => setComposer(null)}>
+        <p className="ew-hint">AI 会结合前后文生成候选节点，预览采用后才会插入正文。</p>
+      </Composer> : mode === 'notebook' && <div className="ew-insert-actions">
+        <button className="ew-insert" disabled={!enabled('node/insert')} onClick={() => setComposer('insert')}>＋ 在这里添加节点</button>
+        <button className="ew-insert" disabled={!enabled('draft/request')} onClick={() => setComposer('ai-insert')}>用 AI 写节点</button>
+      </div>}
   </section>;
 }
 
-function QuestionPanel({ question, document, act, enabled, openQuestion, returnToMain, jumpTo }: {
+function QuestionPanel({ question, document, act, enabled, openQuestion, returnToMain, jumpTo, renderMarkdown }: {
   question: NotebookQuestion; document: NotebookDocument; act: Act; enabled: Enabled;
   openQuestion: (question: NotebookQuestion) => void; returnToMain: () => void; jumpTo: (nodeId: string) => void;
+  renderMarkdown?: NotebookProps['renderMarkdown'];
 }) {
   const [editing, setEditing] = useState(false);
   const [following, setFollowing] = useState(false);
@@ -330,22 +567,27 @@ function QuestionPanel({ question, document, act, enabled, openQuestion, returnT
       onSubmit={text => act({ type: 'question/add', nodeId: question.nodeId, parentQuestionId: question.id, text })} />}
     {!!children.length && <div className="ew-followups"><h4>由此产生的追问</h4>{children.map(child =>
       <QuestionLine key={child.id} question={child} onOpen={() => openQuestion(child)} />)}</div>}
+    <QuestionPlanEditor question={question} document={document} act={act} enabled={enabled} />
+    <h4>和 AI 讨论这个问题</h4>
+    <DiscussionView key={question.id} document={document} questionId={question.id} act={act} enabled={enabled} renderMarkdown={renderMarkdown} />
   </aside>;
 }
 
 export function Notebook({ document, onAction, renderMarkdown, busy = false, disabledActions = [] }: NotebookProps) {
   const [mode, setMode] = useState<'notebook' | 'article'>('notebook');
   const [showQuestions, setShowQuestions] = useState(false);
+  const [showArticleChat, setShowArticleChat] = useState(false);
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
   const [addingFirst, setAddingFirst] = useState(false);
   const pendingRef = useRef(false);
   const nodes = useRef(new Map<string, HTMLElement>());
+  const generationActions: NotebookAction['type'][] = ['draft/request', 'chat/send', 'chat/compose'];
   const enabled: Enabled = type => !busy && !pending && !disabledActions.includes(type)
-    && !(type === 'draft/request' && document.generatingNodeId);
+    && !(generationActions.includes(type) && isGenerating(document));
   const act: Act = async action => {
     if (busy || pendingRef.current || disabledActions.includes(action.type)) return false;
-    const background = action.type === 'draft/request';
+    const background = generationActions.includes(action.type);
     if (!background) { pendingRef.current = true; setPending(true); }
     setError('');
     try { await onAction(action); return true; }
@@ -359,6 +601,7 @@ export function Notebook({ document, onAction, renderMarkdown, busy = false, dis
     void act({ type: 'node/read', nodeId });
   };
   const openQuestion = (question: NotebookQuestion) => {
+    setShowArticleChat(false);
     void act({ type: 'branch/open', questionId: question.id,
       returnNodeId: document.branchReturnNodeId ?? document.cursorNodeId ?? question.nodeId });
   };
@@ -383,6 +626,7 @@ export function Notebook({ document, onAction, renderMarkdown, busy = false, dis
           <button aria-pressed={mode === 'notebook'} onClick={() => setMode('notebook')}>Notebook</button>
           <button aria-pressed={mode === 'article'} onClick={() => setMode('article')}>连续文章</button>
         </div>
+        <button aria-pressed={showArticleChat} onClick={() => setShowArticleChat(!showArticleChat)}>讨论这篇文章</button>
         <button aria-pressed={showQuestions} onClick={() => setShowQuestions(!showQuestions)}>待解释 <span className="ew-count">{openQuestions.length}</span></button>
         <button disabled={!enabled('backend/settings')} title="打开后端设置" onClick={() => void act({ type: 'backend/settings' })}>后端：{backendLabel}</button>
         <button disabled={!enabled('handoff/import')} onClick={() => void act({ type: 'handoff/import' })}>导入外部草稿</button>
@@ -394,7 +638,7 @@ export function Notebook({ document, onAction, renderMarkdown, busy = false, dis
       <span>{currentIndex >= 0 ? `阅读位置：${currentIndex + 1} / ${document.nodes.length}` : '选择一处，继续解释的主线'}</span></div>
     {document.warning && <div className="ew-warning ew-banner" role="status">{document.warning}</div>}
     {error && <div className="ew-error ew-banner" role="alert">{error}<button onClick={() => setError('')} aria-label="关闭错误提示">×</button></div>}
-    <div className={`ew-workspace${activeQuestion || showQuestions ? ' ew-has-panel' : ''}`}>
+    <div className={`ew-workspace${activeQuestion || showQuestions || showArticleChat ? ' ew-has-panel' : ''}`}>
       <nav className="ew-outline" aria-label="解释节点目录"><p className="ew-eyebrow">文章主线</p>
         {document.nodes.map((node, index) => <button key={node.id} aria-current={node.id === document.cursorNodeId ? 'location' : undefined}
           onClick={() => jumpTo(node.id)}><span className="ew-outline-number">{index + 1}</span><span>{node.title}</span>
@@ -411,8 +655,12 @@ export function Notebook({ document, onAction, renderMarkdown, busy = false, dis
           renderMarkdown={renderMarkdown} openQuestion={openQuestion} register={element => { if (element) nodes.current.set(node.id, element); else nodes.current.delete(node.id); }} />)}
         {!!document.nodes.length && <p className="ew-endnote">主线暂时到这里。问题可以继续留在原处，等待后续解释。</p>}
       </main>
-      {activeQuestion ? <QuestionPanel key={activeQuestion.id} question={activeQuestion} document={document} act={act} enabled={enabled}
-        openQuestion={openQuestion} returnToMain={() => void returnToMain()} jumpTo={jumpTo} /> : showQuestions &&
+      {showArticleChat ? <aside className="ew-question-panel ew-article-discussion" aria-label="文章讨论面板">
+        <div className="ew-panel-top"><h3>讨论这篇文章</h3><button onClick={() => setShowArticleChat(false)}>收起讨论</button></div>
+        <p className="ew-hint">讨论与正文分别保留。读到哪里，返回时仍在哪里。</p>
+        <DiscussionView document={document} act={act} enabled={enabled} renderMarkdown={renderMarkdown} />
+      </aside> : activeQuestion ? <QuestionPanel key={activeQuestion.id} question={activeQuestion} document={document} act={act} enabled={enabled}
+        openQuestion={openQuestion} returnToMain={() => void returnToMain()} jumpTo={jumpTo} renderMarkdown={renderMarkdown} /> : showQuestions &&
         <aside className="ew-question-panel" aria-label="待解释的问题"><div className="ew-panel-top"><h3>待解释的问题</h3><button onClick={() => setShowQuestions(false)}>收起</button></div>
           <p className="ew-hint">依据当前阅读位置计算；后文的解释会单独提示。</p>
           {openQuestions.length ? openQuestions.map(question => <QuestionLine key={question.id} question={question} onOpen={() => openQuestion(question)} />) :

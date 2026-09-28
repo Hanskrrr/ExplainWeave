@@ -18,6 +18,11 @@ inspection, run `node tests/browser/serve.mjs` and open that address.
 Coverage includes wide and narrow layouts, adding questions, exact source evidence,
 reading-relative explanation status, real CodeMirror contenteditable edits, stale
 evidence, undo, returning from a question branch, and editing/cancelling generation.
+The discussion tests additionally cover multiple chat turns, inherited parent
+context, later-node plans, proposal adoption with evidence, and reopening the
+controller from saved in-memory files. `?backend=fixture` selects an explicitly
+named deterministic test provider to exercise the non-simulated adoption branch;
+it still makes no network request and is not a real model response.
 Browser input tests do not replace manual testing with a real OS IME in Obsidian.
 Markdown uses the safe source-text fallback; this fixture does not test Obsidian's
 Markdown renderer or its application-level focus and lifecycle behavior.

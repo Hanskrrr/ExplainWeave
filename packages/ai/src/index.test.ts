@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ContextJournal, MockBackend, type WritingTask } from './index';
+import { ContextJournal, MockBackend, parseWritingProposal, type WritingTask } from './index';
 
 const task: WritingTask = { id: 'task-1', instruction: '补充说明', targetNodeId: 'a', context: [{ id: 'a', revision: '1', text: '原文' }] };
 
@@ -18,6 +18,25 @@ describe('offline backend', () => {
     await stream.next();
     controller.abort();
     await expect(stream.next()).rejects.toMatchObject({ name: 'AbortError' });
+  });
+  it('returns structured compose suggestions without inventing explanation links', async () => {
+    let output = '';
+    for await (const event of new MockBackend(0).generate({ ...task, mode: 'compose' }, new AbortController().signal)) {
+      if (event.type === 'text') output += event.text;
+    }
+    const proposal = parseWritingProposal(output);
+    expect(proposal.markdown).toContain('没有调用模型');
+    expect(proposal.explanations).toEqual([]);
+    expect(proposal.deferred).toEqual([]);
+  });
+  it('keeps chat replies conversational and explicitly simulated', async () => {
+    let output = '';
+    for await (const event of new MockBackend(0).generate({ ...task, mode: 'chat', history: [{ role: 'user', content: '先前问题' }] }, new AbortController().signal)) {
+      if (event.type === 'text') output += event.text;
+    }
+    expect(output).toContain('模拟回答');
+    expect(output).toContain('1 条历史消息');
+    expect(() => parseWritingProposal(output)).toThrow();
   });
 });
 

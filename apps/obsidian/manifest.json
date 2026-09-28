@@ -1,7 +1,7 @@
 {
   "id": "explainweave",
   "name": "ExplainWeave",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.12.0",
   "description": "Keep explanations, questions, and writing connected in a notebook view.",
   "author": "Hanskrrr",

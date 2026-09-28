@@ -1,5 +1,7 @@
 /** Backends declare capabilities; opening another application is not a model response. */
-export { DeepSeekBackend, ClaudeBackend, ProviderError, type ProviderConfig, type FetchLike } from './providers';
+export { DeepSeekBackend, ClaudeBackend, ProviderError, buildTaskMessages, type ProviderConfig, type FetchLike } from './providers';
+export { ContextJournal, ContextJournalError } from './journal';
+export { parseWritingProposal, WritingProposalError, type WritingProposal } from './proposal';
 export type BackendKind = 'model' | 'agent' | 'handoff';
 export interface BackendCapabilities {
   kind: BackendKind;
@@ -9,12 +11,21 @@ export interface BackendCapabilities {
   usageReporting: boolean;
 }
 export interface ContextBlock { id: string; revision: string; text: string }
+export interface ConversationMessage { role: 'user' | 'assistant'; content: string }
 export interface WritingTask {
   id: string;
   instruction: string;
   context: readonly ContextBlock[];
   targetNodeId: string;
   question?: string;
+  /** Undefined keeps the legacy Markdown-only composing contract. */
+  mode?: 'chat' | 'compose';
+  /** Complete prior conversation, in order; the current request is separate. */
+  history?: ConversationMessage[];
+  /** Validated, append-only ContextJournal serialization. */
+  contextJournal?: string;
+  /** With this present, history is the original wire transcript; append only this journal suffix. */
+  contextJournalDelta?: string;
 }
 export type GenerationEvent =
   | { type: 'text'; text: string }
@@ -45,26 +56,14 @@ export class MockBackend implements ModelBackend {
   constructor(private readonly delayMs = 35) {}
   async *generate(task: WritingTask, signal: AbortSignal): AsyncIterable<GenerationEvent> {
     const focus = task.question || task.instruction;
-    const draft = `### 补充解释（模拟草稿）\n\n> 这是离线流程演示，没有调用模型，也没有判断问题已被解释。\n\n待解释的问题：${focus}\n\n先补充读者需要的背景，再用一个具体例子展示中间步骤，最后说明它如何引出下一节。请把这一段改写为实际解释后，再关联它覆盖的问题。\n`;
-    for (const chunk of draft.match(/[\s\S]{1,16}/gu) ?? []) {
+    const markdown = `### 补充解释（模拟草稿）\n\n> 这是离线流程演示，没有调用模型，也没有判断问题已被解释。\n\n待解释的问题：${focus}\n\n先补充读者需要的背景，再用一个具体例子展示中间步骤，最后说明它如何引出下一节。请把这一段改写为实际解释后，再关联它覆盖的问题。\n`;
+    const output = task.mode === 'compose' ? JSON.stringify({ markdown, explanations: [], deferred: [] })
+      : task.mode === 'chat' ? `这是模拟回答，没有调用模型。我收到的问题是：${focus}\n\n当前包含 ${task.history?.length ?? 0} 条历史消息。此演示不会把问题标记为已解释。` : markdown;
+    for (const chunk of output.match(/[\s\S]{1,16}/gu) ?? []) {
       await pause(this.delayMs, signal);
       yield { type: 'text', text: chunk };
     }
     if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
     yield { type: 'done', backendId: this.id, simulated: true };
   }
-}
-
-/** A serializable application log, not a promise of server-side KV cache reuse. */
-export class ContextJournal {
-  private readonly entries: { sequence: number; blocks: ContextBlock[]; instruction: string }[] = [];
-  append(task: WritingTask): string {
-    const previous = new Map<string, string>();
-    for (const entry of this.entries) for (const block of entry.blocks) previous.set(block.id, block.revision);
-    const changed = task.context.filter(block => previous.get(block.id) !== block.revision);
-    this.entries.push({ sequence: this.entries.length + 1, blocks: structuredClone(changed), instruction: task.instruction });
-    return this.serialize();
-  }
-  serialize(): string { return this.entries.map(entry => JSON.stringify(entry) + '\n').join(''); }
-  checkpoint(task: WritingTask): string { this.entries.length = 0; return this.append(task); }
 }

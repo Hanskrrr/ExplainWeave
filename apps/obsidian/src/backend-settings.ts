@@ -43,7 +43,7 @@ export class BackendSettingsModal extends Modal {
         text.inputEl.type = 'password'; text.inputEl.autocomplete = 'off';
         text.setValue(this.keys.get(selected) ?? '').onChange(value => { this.keys.set(selected, value.trim()); });
       });
-      this.contentEl.createEl('p', { text: '生成时会把当前文章正文和附属问题发送给上面的模型服务。配置保存不代表服务已连接。' });
+      this.contentEl.createEl('p', { text: '生成时会发送文章正文、附属问题、相关讨论和上下文更新记录（可能含此前版本）给上面的模型服务。配置保存不代表服务已连接。' });
     } else this.contentEl.createEl('p', { text: '用于验证草稿流程，不需要密钥，也不会判断问题是否已解释。' });
     this.contentEl.createEl('p', { text: 'Cowork 使用文章中的“交给 Cowork”入口，在 Claude 客户端完成任务。Codex 适配器尚未接通。' });
     const error = this.contentEl.createEl('p', { cls: 'ew-warning', attr: { role: 'alert' } });
